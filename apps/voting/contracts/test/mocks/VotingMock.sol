@@ -9,11 +9,11 @@ contract VotingMock is Voting, TimeHelpersMock {
      * https://github.com/trufflesuite/truffle/issues/569
      * https://github.com/trufflesuite/truffle/issues/737
      */
-    function newVoteExt(bytes _executionScript, string _metadata, bool _castVote, bool _executesIfDecided)
+    function newVoteExt(bytes _executionScript, string _metadata, bool _castVote)
         external
         returns (uint256 voteId)
     {
-        voteId = _newVote(_executionScript, _metadata, _castVote, _executesIfDecided);
+        voteId = _newVote(_executionScript, _metadata, _castVote);
         emit StartVote(voteId, msg.sender, _metadata);
     }
 
@@ -30,7 +30,7 @@ contract VotingMock is Voting, TimeHelpersMock {
         token.generateTokens(_holder, _tokenAmount);
 
         bytes memory noScript = new bytes(0);
-        voteId = _newVote(noScript, _metadata, false, false);
+        voteId = _newVote(noScript, _metadata, false);
         emit StartVote(voteId, msg.sender, _metadata);
     }
 }

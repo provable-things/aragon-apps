@@ -159,36 +159,53 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
                 executionTarget = await ExecutionTarget.new()
             })
 
-            it('deciding voting is automatically executed', async () => {
+            it('deciding voting is not automatically executed', async () => {
                 const action = { to: executionTarget.address, calldata: executionTarget.contract.execute.getData() }
                 const script = encodeCallScript([action])
-                await voting.newVote(script, '', { from: holder51 })
+                await voting.newVote(script, '', true, { from: holder51 })
+                assert.equal(await executionTarget.counter(), 0, 'should have not received execution call')
+            })
+
+            it('voting is executed after voting duration', async () => {
+                const action = { to: executionTarget.address, calldata: executionTarget.contract.execute.getData() }
+                const script = encodeCallScript([action])
+                const voteId = createdVoteId(await voting.newVote(script, '', true, { from: holder51 }))
+
+                await voting.mockSetTimestamp(NOW + votingDuration)
+                await voting.executeVote(voteId)
+
                 assert.equal(await executionTarget.counter(), 1, 'should have received execution call')
             })
 
-            it('deciding voting is automatically executed (long version)', async () => {
+            it('deciding voting is not automatically executed (long version)', async () => {
                 const action = { to: executionTarget.address, calldata: executionTarget.contract.execute.getData() }
                 const script = encodeCallScript([action])
-                await voting.newVoteExt(script, '', true, true, { from: holder51 })
-                assert.equal(await executionTarget.counter(), 1, 'should have received execution call')
+                await voting.newVoteExt(script, '', true, { from: holder51 })
+                assert.equal(await executionTarget.counter(), 0, 'should have not received execution call')
             })
 
             it('execution scripts can execute multiple actions', async () => {
                 const action = { to: executionTarget.address, calldata: executionTarget.contract.execute.getData() }
                 const script = encodeCallScript([action, action, action])
-                await voting.newVote(script, '', { from: holder51 })
+                const voteId = createdVoteId(await voting.newVote(script, '', true, { from: holder51 }))
+
+                await voting.mockSetTimestamp(NOW + votingDuration)
+                await voting.executeVote(voteId)
+
                 assert.equal(await executionTarget.counter(), 3, 'should have executed multiple times')
             })
 
             it('execution script can be empty', async () => {
-                await voting.newVote(encodeCallScript([]), '', { from: holder51 })
+                await voting.newVote(encodeCallScript([]), '', true, { from: holder51 })
             })
 
             it('execution throws if any action on script throws', async () => {
                 const action = { to: executionTarget.address, calldata: executionTarget.contract.execute.getData() }
                 let script = encodeCallScript([action])
                 script = script.slice(0, -2) // remove one byte from calldata for it to fail
-                await assertRevert(voting.newVote(script, '', { from: holder51 }))
+                const voteId = createdVoteId(await voting.newVote(script, '', true, { from: holder51 }))
+                await voting.mockIncreaseTime(votingDuration + 1)
+                await assertRevert(voting.executeVote(voteId))
             })
 
             it('forwarding creates vote', async () => {
@@ -205,7 +222,7 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
                     const action = { to: executionTarget.address, calldata: executionTarget.contract.execute.getData() }
                     script = encodeCallScript([action, action])
 
-                    const receipt = await voting.newVoteExt(script, 'metadata', false, false, { from: holder51 });
+                    const receipt = await voting.newVoteExt(script, 'metadata', false, { from: holder51 });
                     voteId = getEventArgument(receipt, 'StartVote', 'voteId')
                     creator = getEventArgument(receipt, 'StartVote', 'creator')
                     metadata = getEventArgument(receipt, 'StartVote', 'metadata')
@@ -239,9 +256,9 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
                     // with new quorum at 70% it shouldn't have, but since min quorum is snapshotted
                     // it will succeed
 
-                    await voting.vote(voteId, true, false, { from: holder51 })
-                    await voting.vote(voteId, true, false, { from: holder20 })
-                    await voting.vote(voteId, false, false, { from: holder29 })
+                    await voting.vote(voteId, true, { from: holder51 })
+                    await voting.vote(voteId, true, { from: holder20 })
+                    await voting.vote(voteId, false, { from: holder29 })
                     await voting.mockIncreaseTime(votingDuration + 1)
 
                     const state = await voting.getVote(voteId)
@@ -256,7 +273,7 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
                     // with new quorum at 50% it shouldn't have, but since min quorum is snapshotted
                     // it will succeed
 
-                    await voting.vote(voteId, true, true, { from: holder29 })
+                    await voting.vote(voteId, true, { from: holder29 })
                     await voting.mockIncreaseTime(votingDuration + 1)
 
                     const state = await voting.getVote(voteId)
@@ -265,7 +282,7 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
                 })
 
                 it('holder can vote', async () => {
-                    await voting.vote(voteId, false, true, { from: holder29 })
+                    await voting.vote(voteId, false, { from: holder29 })
                     const state = await voting.getVote(voteId)
                     const voterState = await voting.getVoterState(voteId, holder29)
 
@@ -274,9 +291,9 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
                 })
 
                 it('holder can modify vote', async () => {
-                    await voting.vote(voteId, true, true, { from: holder29 })
-                    await voting.vote(voteId, false, true, { from: holder29 })
-                    await voting.vote(voteId, true, true, { from: holder29 })
+                    await voting.vote(voteId, true, { from: holder29 })
+                    await voting.vote(voteId, false, { from: holder29 })
+                    await voting.vote(voteId, true, { from: holder29 })
                     const state = await voting.getVote(voteId)
 
                     assert.equal(state[6].toString(), bigExp(29, decimals).toString(), 'yea vote should have been counted')
@@ -286,7 +303,7 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
                 it('token transfers dont affect voting', async () => {
                     await token.transfer(nonHolder, bigExp(29, decimals), { from: holder29 })
 
-                    await voting.vote(voteId, true, true, { from: holder29 })
+                    await voting.vote(voteId, true, { from: holder29 })
                     const state = await voting.getVote(voteId)
 
                     assert.equal(state[6].toString(), bigExp(29, decimals).toString(), 'yea vote should have been counted')
@@ -294,54 +311,45 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
                 })
 
                 it('throws when non-holder votes', async () => {
-                    await assertRevert(voting.vote(voteId, true, true, { from: nonHolder }), errors.VOTING_CAN_NOT_VOTE)
+                    await assertRevert(voting.vote(voteId, true,{ from: nonHolder }), errors.VOTING_CAN_NOT_VOTE)
                 })
 
                 it('throws when voting after voting closes', async () => {
                     await voting.mockIncreaseTime(votingDuration + 1)
-                    await assertRevert(voting.vote(voteId, true, true, { from: holder29 }), errors.VOTING_CAN_NOT_VOTE)
+                    await assertRevert(voting.vote(voteId, true, { from: holder29 }), errors.VOTING_CAN_NOT_VOTE)
                 })
 
                 it('can execute if vote is approved with support and quorum', async () => {
-                    await voting.vote(voteId, true, true, { from: holder29 })
-                    await voting.vote(voteId, false, true, { from: holder20 })
+                    await voting.vote(voteId, true, { from: holder29 })
+                    await voting.vote(voteId, false, { from: holder20 })
                     await voting.mockIncreaseTime(votingDuration + 1)
                     await voting.executeVote(voteId)
                     assert.equal(await executionTarget.counter(), 2, 'should have executed result')
                 })
 
                 it('cannot execute vote if not enough quorum met', async () => {
-                    await voting.vote(voteId, true, true, { from: holder20 })
+                    await voting.vote(voteId, true, { from: holder20 })
                     await voting.mockIncreaseTime(votingDuration + 1)
                     await assertRevert(voting.executeVote(voteId), errors.VOTING_CAN_NOT_EXECUTE)
                 })
 
                 it('cannot execute vote if not support met', async () => {
-                    await voting.vote(voteId, false, true, { from: holder29 })
-                    await voting.vote(voteId, false, true, { from: holder20 })
+                    await voting.vote(voteId, false, { from: holder29 })
+                    await voting.vote(voteId, false, { from: holder20 })
                     await voting.mockIncreaseTime(votingDuration + 1)
                     await assertRevert(voting.executeVote(voteId), errors.VOTING_CAN_NOT_EXECUTE)
                 })
 
-                it('vote can be executed automatically if decided', async () => {
-                    await voting.vote(voteId, true, true, { from: holder51 }) // causes execution
-                    assert.equal(await executionTarget.counter(), 2, 'should have executed result')
-                })
-
-                it('vote can be not executed automatically if decided', async () => {
-                    await voting.vote(voteId, true, false, { from: holder51 }) // doesnt cause execution
-                    await voting.executeVote(voteId)
-                    assert.equal(await executionTarget.counter(), 2, 'should have executed result')
-                })
-
                 it('cannot re-execute vote', async () => {
-                    await voting.vote(voteId, true, true, { from: holder51 }) // causes execution
+                    await voting.vote(voteId, true, { from: holder51 }) // causes execution
                     await assertRevert(voting.executeVote(voteId), errors.VOTING_CAN_NOT_EXECUTE)
                 })
 
                 it('cannot vote on executed vote', async () => {
-                    await voting.vote(voteId, true, true, { from: holder51 }) // causes execution
-                    await assertRevert(voting.vote(voteId, true, true, { from: holder20 }), errors.VOTING_CAN_NOT_VOTE)
+                    await voting.vote(voteId, true, { from: holder51 })
+                    await voting.mockIncreaseTime(votingDuration + 1)
+                    await voting.executeVote(voteId)
+                    await assertRevert(voting.vote(voteId, true, { from: holder20 }), errors.VOTING_CAN_NOT_VOTE)
                 })
             })
         })
@@ -376,7 +384,7 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
         })
 
         it('fails creating a vote if token has no holder', async () => {
-            await assertRevert(voting.newVote(EMPTY_SCRIPT, 'metadata'), errors.VOTING_NO_VOTING_POWER)
+            await assertRevert(voting.newVote(EMPTY_SCRIPT, 'metadata', true), errors.VOTING_NO_VOTING_POWER)
         })
     })
 
@@ -394,30 +402,30 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
 
         it('new vote cannot be executed before voting', async () => {
             // Account creating vote does not have any tokens and therefore doesn't vote
-            const voteId = createdVoteId(await voting.newVote(EMPTY_SCRIPT, 'metadata'))
+            const voteId = createdVoteId(await voting.newVote(EMPTY_SCRIPT, 'metadata', true))
 
             assert.isFalse(await voting.canExecute(voteId), 'vote cannot be executed')
 
-            await voting.vote(voteId, true, true, { from: holder1 })
+            await voting.vote(voteId, true, { from: holder1 })
 
             const [isOpen, isExecuted] = await voting.getVote(voteId)
 
-            assert.isFalse(isOpen, 'vote should be closed')
-            assert.isTrue(isExecuted, 'vote should have been executed')
+            assert.isTrue(isOpen, 'vote should not be closed')
+            assert.isFalse(isExecuted, 'vote should have not been executed')
 
         })
 
         context('new vote parameters', () => {
             it('creating vote as holder executes vote (if _canExecute param says so)', async () => {
-                const voteId = createdVoteId(await voting.newVoteExt(EMPTY_SCRIPT, 'metadata', true, true, { from: holder1 }))
+                const voteId = createdVoteId(await voting.newVoteExt(EMPTY_SCRIPT, 'metadata', true, { from: holder1 }))
                 const [isOpen, isExecuted] = await voting.getVote(voteId)
 
-                assert.isFalse(isOpen, 'vote should be closed')
-                assert.isTrue(isExecuted, 'vote should have been executed')
+                assert.isTrue(isOpen, 'vote should not be closed')
+                assert.isFalse(isExecuted, 'vote should have not been executed')
             })
 
             it("creating vote as holder doesn't execute vote if _canExecute param doesn't says so", async () => {
-                const voteId = createdVoteId(await voting.newVoteExt(EMPTY_SCRIPT, 'metadata', true, false, { from: holder1 }))
+                const voteId = createdVoteId(await voting.newVoteExt(EMPTY_SCRIPT, 'metadata', true, { from: holder1 }))
                 const [isOpen, isExecuted] = await voting.getVote(voteId)
 
                 assert.isTrue(isOpen, 'vote should be open')
@@ -439,26 +447,36 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
             await voting.initialize(token.address, neededSupport, minimumAcceptanceQuorum, votingDuration)
         })
 
-        it('new vote cannot be executed before holder2 voting', async () => {
-            const voteId = createdVoteId(await voting.newVote(EMPTY_SCRIPT, 'metadata'))
+        it('new vote cannot be executed before voting duration and can be executed after voting duration', async () => {
+            const voteId = createdVoteId(await voting.newVote(EMPTY_SCRIPT, 'metadata', true))
 
             assert.isFalse(await voting.canExecute(voteId), 'vote cannot be executed')
 
-            await voting.vote(voteId, true, true, { from: holder1 })
-            await voting.vote(voteId, true, true, { from: holder2 })
+            await voting.vote(voteId, true, { from: holder1 })
+            await voting.vote(voteId, true, { from: holder2 })
 
-            const [isOpen, isExecuted] = await voting.getVote(voteId)
+            assert.isFalse(await voting.canExecute(voteId), 'vote cannot be executed')
 
-            assert.isFalse(isOpen, 'vote should be closed')
-            assert.isTrue(isExecuted, 'vote should have been executed')
+            let [isOpen, isExecuted] = await voting.getVote(voteId)
+
+            assert.isTrue(isOpen, 'vote should not be closed')
+            assert.isFalse(isExecuted, 'vote should have not been executed')
+
+            await voting.mockSetTimestamp(NOW + votingDuration)
+            await voting.executeVote(voteId)
+
+            let [isOpenAfterExecution, isExecutedAfterExecution] = await voting.getVote(voteId)
+
+            assert.isFalse(isOpenAfterExecution, 'vote should be closed')
+            assert.isTrue(isExecutedAfterExecution, 'vote should have not been executed')
         })
 
-        it('creating vote as holder2 executes vote', async () => {
-            const voteId = createdVoteId(await voting.newVote(EMPTY_SCRIPT, 'metadata', { from: holder2 }))
+        it('creating vote as holder2 does not execute vote', async () => {
+            const voteId = createdVoteId(await voting.newVote(EMPTY_SCRIPT, 'metadata', true, { from: holder2 }))
             const [isOpen, isExecuted] = await voting.getVote(voteId)
 
-            assert.isFalse(isOpen, 'vote should be closed')
-            assert.isTrue(isExecuted, 'vote should have been executed')
+            assert.isTrue(isOpen, 'vote should be closed')
+            assert.isFalse(isExecuted, 'vote should have been executed')
         })
     })
 
@@ -477,7 +495,7 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
 
         it('uses the correct snapshot value if tokens are minted afterwards', async () => {
             // Create vote and afterwards generate some tokens
-            const voteId = createdVoteId(await voting.newVote(EMPTY_SCRIPT, 'metadata'))
+            const voteId = createdVoteId(await voting.newVote(EMPTY_SCRIPT, 'metadata', true))
             await token.generateTokens(holder2, 1)
 
             const [isOpen, isExecuted, startDate, snapshotBlock, supportRequired, minQuorum, y, n, votingPower, execScript] = await voting.getVote(voteId)
@@ -504,7 +522,7 @@ contract('Voting App', ([root, holder1, holder2, holder20, holder29, holder51, n
 
     context('before init', () => {
         it('fails creating a vote before initialization', async () => {
-            await assertRevert(voting.newVote(encodeCallScript([]), ''), errors.APP_AUTH_FAILED)
+            await assertRevert(voting.newVote(encodeCallScript([]), '', true), errors.APP_AUTH_FAILED)
         })
 
         it('fails to forward actions before initialization', async () => {
